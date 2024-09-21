@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Socket.IO Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+
+<body>
+    <button id="connect">Connect</button>
+    <button id="getGroup">Get Group Data</button>
+    <button id="vote">Vote</button>
+    <div id="output"></div>
+
+    <script>
+        let socket;
+        const output = document.getElementById('output');
+
+        document.getElementById('connect').onclick = () => {
+            socket = io('http://localhost:3000/group');
+            socket.on('connect', () => {
+                output.innerHTML += '<p>Connected to server</p>';
+            });
+
+            socket.on('groupData', (data) => {
+                output.innerHTML += '<p>Received group data: ' + JSON.stringify(data) + '</p>';
+            });
+
+            socket.on('voteResult', (data) => {
+                output.innerHTML += '<p>Vote result: ' + JSON.stringify(data) + '</p>';
+            });
+
+            socket.on('groupUpdate', (data) => {
+                output.innerHTML += '<p>Group update: ' + JSON.stringify(data) + '</p>';
+            });
+        };
+
+        document.getElementById('getGroup').onclick = () => {
+            if (socket) {
+                socket.emit('getGroupData', '66ec4bc6278ca3baf60ff843');
+            }
+        };
+
+        document.getElementById('vote').onclick = () => {
+            if (socket) {
+                const now = new Date();
+                const formattedDate = now.toISOString().split('T')[0]; // Format: "2024-09-20"
+                socket.emit('vote', {
+                    groupId: '66ec4bc6278ca3baf60ff843',
+                    date: formattedDate,
+                    meal: 'dinner',
+                    foodItemId: '66ec2b39bf3447e7acfdbfa5',
+                    userId: '66ec2bdebf3447e7acfdbfa8'
+                });
+            }
+        };
+    </script>
+</body>
+
+</html>
