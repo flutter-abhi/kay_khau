@@ -16,7 +16,7 @@ const io = new Server(server, {
 const port = process.env.PORT || 3000;
 const routes = require('./middleware/routs');
 const connectToDatabase = require('./config/database');
-const { getGroupData, vote } = require('./controller/getGroupData');
+const { getGroupData, addVote, checkVote, removeVote } = require('./controller/getGroupData');
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -24,6 +24,7 @@ app.use(cors()); // Add this line
 app.use('/', routes);
 
 io.of('/group').on('connection', (socket) => {
+  
   console.log('A user connected to the group socket');
   socket.on('getGroupData', (groupId) => {
     console.log('Received getGroupData event with groupId:', groupId);
@@ -31,8 +32,17 @@ io.of('/group').on('connection', (socket) => {
 
   });
 
+  socket.on('checkVote', (voteData) => {
+    checkVote(io, socket, voteData);
+  });
+
+
   socket.on('vote', (voteData) => {
-    vote(io, socket, voteData);
+    addVote(io, socket, voteData);
+  });
+
+  socket.on('removeVote', (voteData) => {
+    removeVote(io, socket, voteData);
   });
 });
 

@@ -3,10 +3,10 @@ const Group = require('../schema/groupSchema');
 const getGroupData = async (socket, groupId) => {
   try {
     const group = await Group.findById(groupId)
-      .populate('members')
       .populate('dailyChoices.breakfast.foodItem')
       .populate('dailyChoices.lunch.foodItem')
-      .populate('dailyChoices.dinner.foodItem');
+      .populate('dailyChoices.dinner.foodItem')
+      .populate('groupFoods');
 
     if (!group) {
       socket.emit('groupData', { error: 'Group not found' });
@@ -21,10 +21,8 @@ const getGroupData = async (socket, groupId) => {
   }
 };
 
-const vote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => {
+const addVote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => {
   try {
-    console.log(`Vote attempt: groupId=${groupId}, date=${date}, meal=${meal}, foodItemId=${foodItemId}, userId=${userId}`);
-
     const group = await Group.findById(groupId);
     if (!group) {
       console.log(`Error: Group not found for groupId=${groupId}`);
@@ -36,7 +34,7 @@ const vote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => 
     console.log('Vote date:', voteDate.toISOString());
 
     // Find or create dailyChoice for the vote date
-    let dailyChoice = group.dailyChoices.find(choice => 
+    let dailyChoice = group.dailyChoices.find(choice =>
       choice.date.toDateString() === voteDate.toDateString()
     );
     if (!dailyChoice) {
@@ -52,23 +50,20 @@ const vote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => 
       return;
     }
 
-    // Find or create the food choice in the daily choice
+    // Find or create the food choice
     let foodChoice = dailyChoice[meal].find(choice => choice.foodItem.toString() === foodItemId);
     if (!foodChoice) {
-      foodChoice = { foodItem: groupFoodItem._id, votes: [], voteNumber: 0 };
+      foodChoice = { foodItem: groupFoodItem._id, votes: [userId], voteNumber: 1 };
       dailyChoice[meal].push(foodChoice);
     }
 
-    // Update vote
-    const userVoteIndex = foodChoice.votes.indexOf(userId);
-    if (userVoteIndex > -1) {
-      // Remove vote
-      foodChoice.votes.splice(userVoteIndex, 1);
-      foodChoice.voteNumber--;
-    } else {
-      // Add vote
+    // Add vote if user hasn't voted yet
+    if (!foodChoice.votes.includes(userId)) {
       foodChoice.votes.push(userId);
-      foodChoice.voteNumber++;
+      foodChoice.voteNumber += 1;
+      console.log(`Vote added for user ${userId}, new vote count: ${foodChoice.voteNumber}`);
+    } else {
+      console.log(`User ${userId} has already voted for this item`);
     }
 
     await group.save();
@@ -89,4 +84,117 @@ const vote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => 
   }
 };
 
-module.exports = { getGroupData, vote };
+const removeVote = async (io, socket, { groupId, date, meal, foodItemId, userId }) => {
+  try {
+    const group = await Group.findById(groupId);
+    if (!group) {
+      console.log(`Error: Group not found for groupId=${groupId}`);
+      socket.emit('voteResult', { error: 'Group not found' });
+      return;
+    }
+
+    const voteDate = new Date(date);
+    console.log('Remove vote date:', voteDate.toISOString());
+
+    // Find dailyChoice for the vote date
+    let dailyChoice = group.dailyChoices.find(choice =>
+      choice.date.toDateString() === voteDate.toDateString()
+    );
+    if (!dailyChoice) {
+      console.log('No daily choice found for the given date');
+      socket.emit('voteResult', { error: 'No vote found to remove' });
+      return;
+    }
+
+    // Find the food choice
+    let foodChoice = dailyChoice[meal].find(choice => choice.foodItem.toString() === foodItemId);
+    if (!foodChoice) {
+      console.log(`Error: No vote found for foodItemId=${foodItemId}`);
+      socket.emit('voteResult', { error: 'No vote found to remove' });
+      return;
+    }
+
+    // Remove vote if user has voted
+    const voteIndex = foodChoice.votes.indexOf(userId);
+    if (voteIndex !== -1) {
+      foodChoice.votes.splice(voteIndex, 1);
+      foodChoice.voteNumber--;
+
+      // Remove food choice if no votes left
+      if (foodChoice.votes.length === 0) {
+        dailyChoice[meal] = dailyChoice[meal].filter(choice => choice.foodItem.toString() !== foodItemId);
+      }
+
+      await group.save();
+
+      // Decide today's meal after removing vote
+      const todaysMeal = await group.decideTodaysMeal(voteDate, meal);
+
+      // Emit updated group data to all sockets in the group room
+      io.to(groupId).emit('groupUpdate', { group, todaysMeal });
+      socket.emit('voteResult', { success: true });
+
+      // Fetch updated group data and send it to the client
+      getGroupData(socket, groupId);
+    } else {
+      socket.emit('voteResult', { error: 'No vote found to remove' });
+    }
+  } catch (error) {
+    console.error('Error removing vote:', error);
+    console.log('Vote removal details:', { groupId, date, meal, foodItemId, userId });
+    socket.emit('voteResult', { error: 'Error removing vote' });
+  }
+};
+
+const checkVote = async (io, socket, voteData) => {
+  const { groupId, date, meal, foodItemId, userId } = voteData;
+
+  try {
+    // Check if meal is undefined
+    if (!meal) {
+      console.log('Error: Meal is undefined');``
+      socket.emit('voteStatus', { error: 'Meal is undefined' });
+      return;
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) {
+      console.log(`Error: Group not found for groupId=${groupId}`);
+      socket.emit('voteStatus', { error: 'Group not found' });
+      return;
+    }
+
+    const voteDate = new Date(date);
+    console.log('Check vote date:', voteDate.toISOString());
+
+    const dailyChoice = group.dailyChoices.find(choice =>
+      choice.date.toDateString() === voteDate.toDateString()
+    );
+
+    if (!dailyChoice) {
+      console.log('No daily choice found for the given date');
+      socket.emit('voteStatus', { hasVoted: false });
+      return;
+    }
+
+    // Check if the meal property exists in dailyChoice
+    if (!dailyChoice[meal]) {
+      console.log(`Error: Invalid meal type '${meal}'`);
+      socket.emit('voteStatus', { error: 'Invalid meal type' });
+      return;
+    }
+
+    const foodChoice = dailyChoice[meal].find(choice =>
+      choice.foodItem.toString() === foodItemId
+    );
+
+    const hasVoted = foodChoice ? foodChoice.votes.includes(userId) : false;
+    console.log(`User ${userId} has voted: ${hasVoted}`);
+    socket.emit('voteStatus', { hasVoted });
+  } catch (error) {
+    console.error('Error checking vote:', error);
+    socket.emit('voteStatus', { error: 'Error checking vote' });
+  }
+};
+
+module.exports = { getGroupData, addVote, removeVote, checkVote };

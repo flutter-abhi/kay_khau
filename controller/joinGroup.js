@@ -22,6 +22,10 @@ const joinGroup = async (req, res) => {
         await group.members.push(user._id);
         await group.save();
 
+        // Add group to user's groups
+        user.groups.push(group._id);
+        await user.save();
+
         const userPreferredFoods = [
             ...user.preferredFoods.breakfast,
             ...user.preferredFoods.lunch,
